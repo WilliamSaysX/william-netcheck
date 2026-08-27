@@ -20,7 +20,7 @@
 // access-control-allow-origin: *，浏览器可直接跨域读取（claude.ai 与
 // api.ipify.org 均已实测）。ipinfo.io 额外给出城市与运营商。
 //
-// check.william.nyc.mn 现仅用于托管本检测页；claude-check / googlevideo-check
+// check.williamsays.uk 现仅用于托管本检测页；claude-check / googlevideo-check
 // 两个 Custom Domain 已无用途，可随时下线。
 //
 // 路由：GET /probe → 回显出口 IP + 地理信息（保留兼容，页面已不再调用）；其余 → 检测页

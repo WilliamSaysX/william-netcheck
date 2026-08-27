@@ -9,7 +9,7 @@ rules = [
   { type = "ESModule", globs = ["netcheck-worker.js"] },
 ]
 
-# Custom Domain：check.william.nyc.mn 是唯一还在用的域名，托管检测页。
+# Custom Domain：check.williamsays.uk 是唯一还在用的域名，托管检测页。
 #
 # claude-check / googlevideo-check 两个旧版诱饵探针域名已清理——旧探测
 # 方式依赖"未命中规则 → 兜底走机场"这一前提，新版配置改成 MATCH → DIRECT
@@ -19,5 +19,5 @@ rules = [
 #
 # ⚠ 新增 Custom Domain 后边缘证书签发需要几分钟，期间 TLS 握手会被重置（SSL_ERROR_SYSCALL），耐心等
 routes = [
-  { pattern = "check.william.nyc.mn", custom_domain = true },
+  { pattern = "check.williamsays.uk", custom_domain = true },
 ]
