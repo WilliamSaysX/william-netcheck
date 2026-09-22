@@ -1,3 +1,4 @@
 # Wrangler 本地开发状态，不提交
 .wrangler/
 .dev.vars
+.env.deploy
