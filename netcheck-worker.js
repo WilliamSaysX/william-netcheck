@@ -138,7 +138,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 .item:last-child { border-bottom: none; }
 /* 固定行高：待检测/检测中/出结果三种状态高度一致，重新检测时页面不跳动 */
 /* 128px 实测能装下最长的结论文案换行成2行的情况（21字"✓ 走直连，既不
-   消耗中转流量也不消耗住宅IP流量"实测 121px）；四张卡片头部固定同一高度，
+   消耗中转流量也不消耗住宅IP流量"实测 121px）；各父行头部固定同一高度，
    不管结论文字是 1 行还是 2 行都不会撑破对齐 */
 .item.parent { min-height: 128px; }
 /* 68px 而不是看起来够用的 52px：子探针成功时 .result 是空的（下面
@@ -168,7 +168,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 .fail { color: #ffb4aa; }
 /* 固定 2 行的高度（实测 line-height 18px，2 行=36px），不管这次的结论
    文字够不够长到自然换行都占住这份空间——之前只给 .item.parent 设
-   min-height 试图"猜一个够用的高度"，结果四张卡片里文字最短的那句刚好
+   min-height 试图"猜一个够用的高度"，结果几个父行里文字最短的那句刚好
    在某个宽度下只占 1 行，其余 3 句占 2 行，行数不一样卡片就跟着不一样高。
    直接固定 .note 自己的高度，从根上让行数不再有差异，不用再猜任何数字 */
 .note { width: 100%; min-height: 36px; font-size: 11px; color: #7b8499; }
@@ -227,24 +227,24 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   .foot { font-size: 12px; }
   .foot-pc { display: block; }
 }
-/* 桌面：四条线路排成 2×2 等高卡片；卡片本身已含全部线路信息，
+/* 桌面：三条线路一行排开；卡片本身已含全部线路信息，
    汇总区只保留一句结论，不再重复线路明细 */
 @media (min-width: 1000px) {
   body { max-width: 1160px; padding: 48px 44px; }
   .groups {
     display: grid;
     /* minmax(0,1fr) 强制各列严格等宽：长地区/ISP 文本收缩省略，而不是撑宽所在列 */
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
   }
   .group { margin-bottom: 0; padding: 8px 20px; }
   .item.child { margin-left: 8px; padding-left: 14px; }
   .summary { margin-bottom: 18px; }
 }
-/* 超宽屏：四条线路一行排开，便于横向对比出口 IP */
+/* 超宽屏：同样三条线路一行排开，只是整体更宽松 */
 @media (min-width: 1500px) {
   body { max-width: 1560px; }
-  .groups { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .groups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 </style>
 </head>
@@ -253,7 +253,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <h1>🌐 网络分流检测</h1>
   <div class="sub">威廉的 AI Club · 手机 / 电脑 / 软路由下的任意设备均可检测</div>
 </div>
-<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为四段分流：AI 站点走「静态住宅IP」，被墙站点走「中转」，其余境外站点与国内网站均走直连（省流量）。</div>
+<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，被墙站点走「中转」，其余境外站点与国内网站均走直连（省流量）。</div>
 <div class="summary" id="summary"><div class="headline">检测中…</div></div>
 <div class="mask-row">
   <button class="btn" id="run">开始检测</button>
@@ -309,11 +309,14 @@ var TARGETS = [
 
   // 🔗 未分类站点：ipinfo.io 不在 gfw.txt、也不在任何分流规则里 → 落 MATCH,DIRECT
   // 走直连才是新版配置的正确行为（省流量的直接证据），不再当作异常。
-  // 排在最后一组：这是这次架构升级新增的兜底出口，放最后更能体现它是
-  // "前面三条线都没接住时的兜底"，而不是跟前面平级的第四条常规线路。
   // 子行选直连实测稳定可达的站点；少数清单外站点（如 stackoverflow / npmjs）
-  // 直连会被干扰，那属于清单覆盖范围的问题，不是分流配置错误
-  { id: 'direct',  name: '未分类站点出口',    host: 'ipinfo.io',       type: 'ipinfo',  url: 'https://ipinfo.io/json' },
+  // 直连会被干扰，那属于清单覆盖范围的问题，不是分流配置错误。
+  //
+  // groupWith: 'cn' —— 跟"国内直连出口"并成一张卡展示（回到三段分流的
+  // 展示口径：AI 走住宅IP / 被墙站点走中转 / 其余境外站点与国内网站均
+  // 直连）。这里仍然是独立的父行、独立探测出口IP，只是不再单独开一张卡，
+  // 底层判定逻辑不受影响，详见 renderRows() 的注释。
+  { id: 'direct',  name: '未分类站点出口',    host: 'ipinfo.io',       type: 'ipinfo',  url: 'https://ipinfo.io/json', groupWith: 'cn' },
   { id: 'amazon',  name: '亚马逊',            host: 'amazon.com',      parent: 'direct', type: 'ping', url: 'https://www.amazon.com/favicon.ico' },
   { id: 'mozilla', name: 'Mozilla',           host: 'mozilla.org',     parent: 'direct', type: 'ping', url: 'https://www.mozilla.org/favicon.ico' },
   // 规范站点域名是裸域。www 曾遗留到停放页，测速它会把 SSL/源站错误误显示成
@@ -472,11 +475,17 @@ function latCls(ms) { return ms < 200 ? 'fast' : ms < 500 ? 'mid' : 'slow'; }
 function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
 function renderRows() {
-  // 每个无 parent 的目标开启一个线路分组卡片，其子目标归入同组
+  // 每个无 parent 的目标开启一个线路分组卡片，其子目标归入同组；
+  // groupWith 是例外——'direct'（未分类站点）标了 groupWith:'cn'，本身仍是
+  // 独立的父行（有自己的出口IP探测），但不再单独开一张新卡片，而是并进
+  // 前一张还开着的卡片里，跟"国内直连出口"合并展示成一张卡。这样做只改
+  // 展示分组，'direct' 的探测/判定逻辑（type、verdict 里的锁定模式校验）
+  // 完全不动——视频里说的是三段分流，这里只是把四张卡的展示合并成三张，
+  // 跟四段路由逻辑本身没关系。
   var html = '';
   var opened = false;
   TARGETS.forEach(function (t) {
-    if (!t.parent) {
+    if (!t.parent && !t.groupWith) {
       if (opened) html += '</div>';
       html += '<div class="group">';
       opened = true;
