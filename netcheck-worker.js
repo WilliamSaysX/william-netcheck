@@ -253,7 +253,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <h1>🌐 网络分流检测</h1>
   <div class="sub">威廉的 AI Club · 手机 / 电脑 / 软路由下的任意设备均可检测</div>
 </div>
-<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，被墙站点走「中转」，其余境外站点与国内网站均走直连（省流量）。</div>
+<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。</div>
 <div class="summary" id="summary"><div class="headline">检测中…</div></div>
 <div class="mask-row">
   <button class="btn" id="run">开始检测</button>
@@ -641,11 +641,11 @@ function verdict(byId) {
     headline = '⚠ 境外规则集未生效：部分境外站点会打不开（只有国内和 AI 站点可用）。请检查网络后重新载入配置，或重新生成';
     cls = 'warn';
   } else if (aiK && relayK && aiK !== relayK && cnK) {
-    headline = '✓ 分流完全正常：AI 走住宅IP、被墙站点走中转、其余境外与国内均直连（省流量）';
+    headline = '✓ 分流完全正常：AI 走住宅IP、日常上网走中转、其余均直连（省流量）';
     cls = 'ok';
   } else if (!relayK && relayOk && aiK && cnK && aiK !== cnK) {
-    // 中转出口读取失败但被墙站点连通：降级判定
-    headline = '✓ 分流工作正常：AI 专线与被墙站点均连通，直连正常（中转出口读取失败，可重试）';
+    // 中转出口读取失败但日常上网站点连通：降级判定
+    headline = '✓ 分流工作正常：AI 专线与日常上网均连通，直连正常（中转出口读取失败，可重试）';
     cls = 'ok';
   } else if (!aiK && aiOk && relayK && cnK && relayK !== cnK) {
     // AI 出口读取失败但 AI 站点连通：降级判定
