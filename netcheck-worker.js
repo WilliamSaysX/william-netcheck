@@ -763,13 +763,21 @@ async function runCheck() {
     setResult(t, r);
   }));
   // 未分类站点出口用 ipinfo.io（通用境外地理库），国内直连用 ipip.net
-  // （专攻中国 IP、城市级精度更高）——两边巧合命中同一个 IP 时（未分类
-  // 流量这次也走了直连、跟国内直连是同一个出口），ipinfo.io 对国内 IP
-  // 的地区粒度经常比 ipip.net 粗（例如只能查到注册城市"广州"，查不出
-  // 实际使用城市"深圳"），会让用户看到同一个 IP 却显示两个不同地区、
-  // 误以为是检测出错。这里改成直接复用 ipip.net 那份更准的结果重新渲染，
-  // 真的是两个不同 IP 的正常情况（未分类流量确实是境外出口）不受影响。
-  if (byId.direct && byId.cn && byId.direct.ip && byId.direct.ip === byId.cn.ip) {
+  // （专攻中国 IP、城市级精度更高，而且返回中文）——两边命中同一条出口
+  // 时（未分类流量这次也走了直连、跟国内直连是同一个出口），ipinfo.io
+  // 对国内 IP 不仅粒度粗（比如只能查到注册城市"广州"，查不出实际使用
+  // 城市"深圳"），还是英文（"China Mobile Communications Group Co."
+  // 这种），跟旁边卡片的中文格式撞在一起显得很乱。这里改成直接复用
+  // ipip.net 那份更准更中文的结果重新渲染。
+  //
+  // 判断"是不是同一条出口"不能直接比 byId.direct.ip === byId.cn.ip 这种
+  // 字节级别相等——同一条本地宽带双栈网络下，两次探测经常一次拿到 IPv4
+  // 一次拿到 IPv6（地址完全不一样但其实是同一个出口），直接比字符串会
+  // 误判成"两个不同 IP"从而漏掉这次复用，这正是之前出现"未分类站点出口
+  // 显示英文地区"的原因。改用 exitKey()（跟 verdict() 判定是不是同一条
+  // 线路用的同一套归并逻辑，境内场景按国家码归并，不受 IPv4/IPv6 影响）
+  // 就能正确识别出这种情况。
+  if (byId.direct && byId.cn && byId.direct.ip && byId.cn.ip && exitKey(byId.direct) === exitKey(byId.cn)) {
     byId.direct.region = byId.cn.region;
     byId.direct.detail = byId.cn.detail;
     var directTarget = TARGETS.filter(function (t) { return t.id === 'direct'; })[0];
