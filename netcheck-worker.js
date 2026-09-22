@@ -305,15 +305,12 @@ var TARGETS = [
   // 是同一件事（都直连、都不耗代理资源），合并成一个出口探测，不再分开
   // 两条子线。出口 IP 用 myip.ipip.net（专攻中国 IP、城市级精度更高、
   // 返回中文，比 ipinfo.io 这种通用境外地理库更适合国内出口）。
-  // 子行前三个是国内网站，后三个是不在任何分流规则里、会落 MATCH,DIRECT
-  // 的未分类网站（少数清单外站点如 stackoverflow/npmjs 直连会被干扰，
-  // 那属于清单覆盖范围的问题，不是分流配置错误）。
+  // 子行只留 3 个（跟另外两张卡对齐，不然这张卡明显比别的高一截）：
+  // 百度代表国内网站，亚马逊/威廉的 AI Club 代表不在任何分流规则里、会落
+  // MATCH,DIRECT 的未分类网站——两类各留代表，不只测国内那一类。
   { id: 'cn',      name: '直连出口',          host: 'myip.ipip.net',   type: 'cn' },
   { id: 'baidu',   name: '百度',              host: 'baidu.com',       parent: 'cn',    type: 'ping', url: 'https://www.baidu.com/favicon.ico' },
-  { id: 'taobao',  name: '淘宝',              host: 'taobao.com',      parent: 'cn',    type: 'ping', url: 'https://www.taobao.com/favicon.ico' },
-  { id: 'bili',    name: '哔哩哔哩',          host: 'bilibili.com',    parent: 'cn',    type: 'ping', url: 'https://www.bilibili.com/favicon.ico' },
   { id: 'amazon',  name: '亚马逊',            host: 'amazon.com',      parent: 'cn',    type: 'ping', url: 'https://www.amazon.com/favicon.ico' },
-  { id: 'mozilla', name: 'Mozilla',           host: 'mozilla.org',     parent: 'cn',    type: 'ping', url: 'https://www.mozilla.org/favicon.ico' },
   // 规范站点域名是裸域。www 曾遗留到停放页，测速它会把 SSL/源站错误误显示成
   // “网站延迟”；这里必须直接测实际服务域名。
   { id: 'wsays',   name: '威廉的 AI Club',    host: 'williamsays.com', parent: 'cn',    type: 'ping', url: 'https://williamsays.com/favicon.ico' }
