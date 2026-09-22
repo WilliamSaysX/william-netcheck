@@ -288,7 +288,7 @@ var TARGETS = [
   // 会跟卡片实际语义对不上（x.com 就在这类目下，已经踩过一次，别再选中）。
   // wikipedia.org / googlevideo.com / bbc.com 都不在 proxy-config.json 的
   // 可选清单里，只会被 gfw.txt 兜底，才是这条线真正安全的探针
-  { id: 'relay',   name: '被墙站点出口',      host: 'api.ipify.org',   type: 'trace',   url: 'https://api.ipify.org/cdn-cgi/trace' },
+  { id: 'relay',   name: '日常上网出口',      host: 'api.ipify.org',   type: 'trace',   url: 'https://api.ipify.org/cdn-cgi/trace' },
   // 探测 URL（功能性）用 www.googlevideo.com 这个固定域名：裸域名
   // googlevideo.com 没有 DNS 记录，而 rr1---sn-xxx 这类主机名是 YouTube
   // 动态分配的 CDN 节点，硬编码会失效——这条不能改。host 只是展示文案，
@@ -301,27 +301,22 @@ var TARGETS = [
   // 可勾选清单、也不像 Netflix 那样限速代理IP，实测稳定 76ms 左右
   { id: 'bbc',     name: 'BBC',               host: 'bbc.com',         parent: 'relay', type: 'ping', url: 'https://www.bbc.com/favicon.ico' },
 
-  // 🇨🇳 国内直连
-  { id: 'cn',      name: '国内直连出口',      host: 'myip.ipip.net',   type: 'cn' },
+  // 🔗 直连出口：国内网站 + 未分类境外网站都在这一条线上——两者对用户来说
+  // 是同一件事（都直连、都不耗代理资源），合并成一个出口探测，不再分开
+  // 两条子线。出口 IP 用 myip.ipip.net（专攻中国 IP、城市级精度更高、
+  // 返回中文，比 ipinfo.io 这种通用境外地理库更适合国内出口）。
+  // 子行前三个是国内网站，后三个是不在任何分流规则里、会落 MATCH,DIRECT
+  // 的未分类网站（少数清单外站点如 stackoverflow/npmjs 直连会被干扰，
+  // 那属于清单覆盖范围的问题，不是分流配置错误）。
+  { id: 'cn',      name: '直连出口',          host: 'myip.ipip.net',   type: 'cn' },
   { id: 'baidu',   name: '百度',              host: 'baidu.com',       parent: 'cn',    type: 'ping', url: 'https://www.baidu.com/favicon.ico' },
   { id: 'taobao',  name: '淘宝',              host: 'taobao.com',      parent: 'cn',    type: 'ping', url: 'https://www.taobao.com/favicon.ico' },
   { id: 'bili',    name: '哔哩哔哩',          host: 'bilibili.com',    parent: 'cn',    type: 'ping', url: 'https://www.bilibili.com/favicon.ico' },
-
-  // 🔗 未分类站点：ipinfo.io 不在 gfw.txt、也不在任何分流规则里 → 落 MATCH,DIRECT
-  // 走直连才是新版配置的正确行为（省流量的直接证据），不再当作异常。
-  // 子行选直连实测稳定可达的站点；少数清单外站点（如 stackoverflow / npmjs）
-  // 直连会被干扰，那属于清单覆盖范围的问题，不是分流配置错误。
-  //
-  // groupWith: 'cn' —— 跟"国内直连出口"并成一张卡展示（回到三段分流的
-  // 展示口径：AI 走住宅IP / 被墙站点走中转 / 其余境外站点与国内网站均
-  // 直连）。这里仍然是独立的父行、独立探测出口IP，只是不再单独开一张卡，
-  // 底层判定逻辑不受影响，详见 renderRows() 的注释。
-  { id: 'direct',  name: '未分类站点出口',    host: 'ipinfo.io',       type: 'ipinfo',  url: 'https://ipinfo.io/json', groupWith: 'cn' },
-  { id: 'amazon',  name: '亚马逊',            host: 'amazon.com',      parent: 'direct', type: 'ping', url: 'https://www.amazon.com/favicon.ico' },
-  { id: 'mozilla', name: 'Mozilla',           host: 'mozilla.org',     parent: 'direct', type: 'ping', url: 'https://www.mozilla.org/favicon.ico' },
+  { id: 'amazon',  name: '亚马逊',            host: 'amazon.com',      parent: 'cn',    type: 'ping', url: 'https://www.amazon.com/favicon.ico' },
+  { id: 'mozilla', name: 'Mozilla',           host: 'mozilla.org',     parent: 'cn',    type: 'ping', url: 'https://www.mozilla.org/favicon.ico' },
   // 规范站点域名是裸域。www 曾遗留到停放页，测速它会把 SSL/源站错误误显示成
   // “网站延迟”；这里必须直接测实际服务域名。
-  { id: 'wsays',   name: '威廉的 AI Club',    host: 'williamsays.com', parent: 'direct', type: 'ping', url: 'https://williamsays.com/favicon.ico' }
+  { id: 'wsays',   name: '威廉的 AI Club',    host: 'williamsays.com', parent: 'cn',    type: 'ping', url: 'https://williamsays.com/favicon.ico' }
 ];
 var COLORS = ['#61afef', '#66bb6a', '#f0c040', '#e06c75', '#c678dd', '#56b6c2'];
 var running = false;
@@ -475,17 +470,11 @@ function latCls(ms) { return ms < 200 ? 'fast' : ms < 500 ? 'mid' : 'slow'; }
 function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
 function renderRows() {
-  // 每个无 parent 的目标开启一个线路分组卡片，其子目标归入同组；
-  // groupWith 是例外——'direct'（未分类站点）标了 groupWith:'cn'，本身仍是
-  // 独立的父行（有自己的出口IP探测），但不再单独开一张新卡片，而是并进
-  // 前一张还开着的卡片里，跟"国内直连出口"合并展示成一张卡。这样做只改
-  // 展示分组，'direct' 的探测/判定逻辑（type、verdict 里的锁定模式校验）
-  // 完全不动——视频里说的是三段分流，这里只是把四张卡的展示合并成三张，
-  // 跟四段路由逻辑本身没关系。
+  // 每个无 parent 的目标开启一个线路分组卡片，其子目标归入同组
   var html = '';
   var opened = false;
   TARGETS.forEach(function (t) {
-    if (!t.parent && !t.groupWith) {
+    if (!t.parent) {
       if (opened) html += '</div>';
       html += '<div class="group">';
       opened = true;
@@ -608,11 +597,10 @@ function addNote(id, text, cls) {
 function verdict(byId) {
   var summary = $('summary');
   var ai     = byId.ai     && byId.ai.ip     ? byId.ai     : null;  // 住宅IP 线
-  var relay  = byId.relay  && byId.relay.ip  ? byId.relay  : null;  // 机场中转线
-  var direct = byId.direct && byId.direct.ip ? byId.direct : null;  // 未分类境外（应直连）
-  var cn     = byId.cn     && byId.cn.ip     ? byId.cn     : null;  // 国内直连
+  var relay  = byId.relay  && byId.relay.ip  ? byId.relay  : null;  // 日常上网线
+  var cn     = byId.cn     && byId.cn.ip     ? byId.cn     : null;  // 直连（国内+未分类）
   var aiK = ai && exitKey(ai), relayK = relay && exitKey(relay);
-  var directK = direct && exitKey(direct), cnK = cn && exitKey(cn);
+  var cnK = cn && exitKey(cn);
   // 出口 IP 偶发读不到时，用同线路子站点的连通性兜底推断该线路死活
   var aiOk = ['claude', 'chatgpt', 'gemini'].some(function (id) { return byId[id] && byId[id].ok && !byId[id].error; });
   var relayOk = ['wiki', 'bbc', 'youtube'].some(function (id) { return byId[id] && byId[id].ok && !byId[id].error; });
@@ -621,26 +609,21 @@ function verdict(byId) {
   // 境内线路按国家码归并（同一条本地宽带 IPv4/IPv6 双栈不算两条线，
   // 原因见 exitKey 定义处的注释）
   var exits = {}; var order = [];
-  [['ai', ai], ['relay', relay], ['direct', direct], ['cn', cn]].forEach(function (p) {
+  [['ai', ai], ['relay', relay], ['cn', cn]].forEach(function (p) {
     if (!p[1]) return;
     var k = exitKey(p[1]);
     if (!exits[k]) { exits[k] = 1; order.push(k); }
   });
 
-  // 本地出口基准：国内直连读到的最可信，其次用未分类境外那条
-  var localK = cnK || directK;
   // 未开代理：AI 站点都走到了国内出口
   var noProxy = (ai && ai.cc === 'CN') || (!ai && !aiOk && relay && relay.cc === 'CN');
   // 国内网站没直连（客户端开了全局，或配置有问题）
   var cnProxied = cn && cn.cc && cn.cc !== 'CN';
-  // 锁定境外出口模式：三条境外线路收敛到同一出口，国内仍直连
+  // 锁定境外出口模式：两条境外线路收敛到同一出口，直连仍是本地
   var lockMode = aiK && relayK && aiK === relayK && cnK && aiK !== cnK;
   // 🚨 境外规则集失效：中转线塌陷回本地出口 → 部分境外站点会打不开（AI 线仍正常，
   // 所以症状是"只有国内和 AI 站点能用"，安卓 FlClash 上真实出现过）
-  var rulesetDown = relayK && localK && relayK === localK && aiK && aiK !== relayK;
-  // 旧版配置：未分类境外也被送去中转（新版应走直连以省流量）。锁定模式下
-  // 三条境外线本来就同出口，不能算旧版，必须先排除
-  var legacyMode = !lockMode && directK && relayK && directK === relayK && cnK && directK !== cnK;
+  var rulesetDown = relayK && cnK && relayK === cnK && aiK && aiK !== relayK;
   var headline, cls;
 
   if (order.length === 0) {
@@ -660,19 +643,16 @@ function verdict(byId) {
   } else if (rulesetDown) {
     headline = '⚠ 境外规则集未生效：部分境外站点会打不开（只有国内和 AI 站点可用）。请检查网络后重新载入配置，或重新生成';
     cls = 'warn';
-  } else if (legacyMode) {
-    headline = '! 检测到旧版配置：未分类流量也走了中转，会持续消耗机场流量。建议重新生成配置';
-    cls = 'warn';
-  } else if (aiK && relayK && aiK !== relayK && directK && cnK && directK === cnK) {
+  } else if (aiK && relayK && aiK !== relayK && cnK) {
     headline = '✓ 分流完全正常：AI 走住宅IP、被墙站点走中转、其余境外与国内均直连（省流量）';
     cls = 'ok';
   } else if (!relayK && relayOk && aiK && cnK && aiK !== cnK) {
     // 中转出口读取失败但被墙站点连通：降级判定
-    headline = '✓ 分流工作正常：AI 专线与被墙站点均连通，国内直连（中转出口读取失败，可重试）';
+    headline = '✓ 分流工作正常：AI 专线与被墙站点均连通，直连正常（中转出口读取失败，可重试）';
     cls = 'ok';
   } else if (!aiK && aiOk && relayK && cnK && relayK !== cnK) {
     // AI 出口读取失败但 AI 站点连通：降级判定
-    headline = '✓ 分流工作正常：中转与国内直连均正常，AI 站点连通（AI 出口读取失败，可重试）';
+    headline = '✓ 分流工作正常：中转与直连均正常，AI 站点连通（AI 出口读取失败，可重试）';
     cls = 'ok';
   } else if (order.length > 1) {
     headline = '✓ 检测到 ' + order.length + ' 个不同出口，分流已生效';
@@ -682,11 +662,11 @@ function verdict(byId) {
     cls = 'warn';
   }
 
-  function rank(k) { return k === aiK ? 0 : k === relayK ? 1 : k === directK ? 2 : 3; }
+  function rank(k) { return k === aiK ? 0 : k === relayK ? 1 : 2; }
 
   // 汇总只展示一句结论；线路明细由下方三张卡片承载，这里只负责给圆点按线路上色
   order.sort(function (a, b) { return rank(a) - rank(b); }).forEach(function (k, i) {
-    [['ai', ai], ['relay', relay], ['direct', direct], ['cn', cn]].forEach(function (p) {
+    [['ai', ai], ['relay', relay], ['cn', cn]].forEach(function (p) {
       if (p[1] && exitKey(p[1]) === k) {
         var d = $('dot-' + p[0]);
         d.style.background = COLORS[i % COLORS.length];
@@ -709,7 +689,7 @@ function verdict(byId) {
   });
 
   // 行级标注（未开代理 / 国内被代理属全局性异常，此时不再逐行解释）。
-  // 四张卡片都配一条结论，行数、行高对齐，视觉上不会有的卡片矮一截
+  // 三张卡片都配一条结论，行数、行高对齐，视觉上不会有的卡片矮一截
   if (!noProxy && !cnProxied) {
     if (!ai && aiOk) {
       addNote('ai', 'AI 出口读取失败（不影响站点使用），可点「重新检测」重试', 'warn');
@@ -717,7 +697,7 @@ function verdict(byId) {
       addNote('ai', '✓ 走静态住宅IP，AI 账号更不容易被风控或封禁', 'ok');
     }
     if (!relay && relayOk) {
-      addNote('relay', '被墙站点出口读取失败，但被墙站点连通正常，可点「重新检测」重试', 'warn');
+      addNote('relay', '出口读取失败，但站点连通正常，可点「重新检测」重试', 'warn');
     } else if (rulesetDown) {
       addNote('relay', '⚠ 塌陷到本地出口：境外规则集没生效，部分境外站点会打不开', 'warn');
     } else if (lockMode && relayK && aiK && relayK === aiK) {
@@ -726,15 +706,6 @@ function verdict(byId) {
       addNote('relay', '⚠ 开着锁定模式，但这次测出的出口跟住宅IP不一致，建议重新生成配置', 'warn');
     } else if (relayK && aiK && relayK !== aiK) {
       addNote('relay', '✓ 与住宅IP分开走，被墙站点不消耗住宅IP流量', 'ok');
-    }
-    if (lockMode && directK && aiK && directK === aiK) {
-      addNote('direct', '✓ 锁定模式下，境外流量统一走住宅IP', 'ok');
-    } else if (lockMode) {
-      addNote('direct', '⚠ 开着锁定模式，但这次测出的出口跟住宅IP不一致，建议重新生成配置', 'warn');
-    } else if (directK && cnK && directK === cnK) {
-      addNote('direct', '✓ 走直连，既不消耗中转流量也不消耗住宅IP流量', 'ok');
-    } else if (legacyMode) {
-      addNote('direct', '⚠ 走了中转：旧版配置会让未分类流量持续消耗机场流量', 'warn');
     }
     if (cnK) {
       addNote('cn', '✓ 走直连，不占用任何代理流量，速度最快', 'ok');
@@ -762,27 +733,6 @@ async function runCheck() {
     byId[t.id] = r;
     setResult(t, r);
   }));
-  // 未分类站点出口用 ipinfo.io（通用境外地理库），国内直连用 ipip.net
-  // （专攻中国 IP、城市级精度更高，而且返回中文）——两边命中同一条出口
-  // 时（未分类流量这次也走了直连、跟国内直连是同一个出口），ipinfo.io
-  // 对国内 IP 不仅粒度粗（比如只能查到注册城市"广州"，查不出实际使用
-  // 城市"深圳"），还是英文（"China Mobile Communications Group Co."
-  // 这种），跟旁边卡片的中文格式撞在一起显得很乱。这里改成直接复用
-  // ipip.net 那份更准更中文的结果重新渲染。
-  //
-  // 判断"是不是同一条出口"不能直接比 byId.direct.ip === byId.cn.ip 这种
-  // 字节级别相等——同一条本地宽带双栈网络下，两次探测经常一次拿到 IPv4
-  // 一次拿到 IPv6（地址完全不一样但其实是同一个出口），直接比字符串会
-  // 误判成"两个不同 IP"从而漏掉这次复用，这正是之前出现"未分类站点出口
-  // 显示英文地区"的原因。改用 exitKey()（跟 verdict() 判定是不是同一条
-  // 线路用的同一套归并逻辑，境内场景按国家码归并，不受 IPv4/IPv6 影响）
-  // 就能正确识别出这种情况。
-  if (byId.direct && byId.cn && byId.direct.ip && byId.cn.ip && exitKey(byId.direct) === exitKey(byId.cn)) {
-    byId.direct.region = byId.cn.region;
-    byId.direct.detail = byId.cn.detail;
-    var directTarget = TARGETS.filter(function (t) { return t.id === 'direct'; })[0];
-    if (directTarget) setResult(directTarget, byId.direct);
-  }
   verdict(byId);
   btn.disabled = false;
   btn.textContent = '\\u91cd\\u65b0\\u68c0\\u6d4b';
