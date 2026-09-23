@@ -250,7 +250,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 <body>
 <div class="head">
   <h1>🌐 网络分流检测</h1>
-  <div class="sub">威廉的 AI Club · 手机 / 电脑 / 软路由下的任意设备均可检测</div>
+  <div class="sub">威廉的 AI Club · 分流 / DNS / WebRTC 一次测完 · 手机 / 电脑 / 软路由均可检测</div>
 </div>
 <div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。<br>同时检测 DNS 与 WebRTC 泄露：确认 DNS 解析和实时连接同样按分流规则走。</div>
 <div class="summary" id="summary"><div class="headline">检测中…</div></div>
