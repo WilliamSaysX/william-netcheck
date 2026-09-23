@@ -203,10 +203,10 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 }
 .mask-toggle input:checked + .slider { background: #34c759; }
 .mask-toggle input:checked + .slider::before { transform: translateX(16px); }
-/* WebRTC 泄露检测卡片：复用 .card 的外观，结论文字单独配色 */
-.wr-line { margin-bottom: 6px; }
-.wr-ok { color: #7ed99a; }
-.wr-warn { color: #ffd27a; }
+/* WebRTC 卡片复用 .group/.item 结构；头部不需要父行那么高的固定高度 */
+.wr-card { margin-top: 16px; }
+.item.parent.wr-head { min-height: 0; }
+.wr-head .note { min-height: 0; }
 .foot { margin-top: auto; padding-top: 28px; font-size: 11px; color: #6b6b80; line-height: 1.7; text-align: center; }
 .foot a { color: #61afef; text-decoration: none; }
 .foot-pc { display: none; } /* 插件推荐仅在电脑端显示 */
@@ -264,10 +264,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <label class="mask-toggle"><span>隐藏 IP/地区</span><input type="checkbox" id="maskToggle"><span class="slider"></span></label>
 </div>
 <div class="groups" id="list"></div>
-<div class="card" id="webrtcCard" style="display:none">
-  <div style="font-weight:700;color:#fff;margin-bottom:8px;">🔒 WebRTC 泄露检测</div>
-  <div id="webrtcResult">检测中…</div>
-</div>
+<div class="group wr-card" id="webrtcCard"></div>
 <div class="foot">
   <div>检测基于「威廉的 AI Club」配置规则，第三方配置仅供参考</div>
   <div class="foot-pc">电脑端可安装 <a href="https://chromewebstore.google.com/search/%E5%A8%81%E5%BB%89%E7%9A%84%20AI%20Club" target="_blank">AI 工具箱浏览器插件</a>，一键生成分流配置</div>
@@ -718,92 +715,160 @@ function verdict(byId) {
   }
 }
 
-// WebRTC 泄露检测：创建一个 RTCPeerConnection，指定公开 STUN 服务器，靠它发起
-// UDP 打洞得到 ICE candidate。这条 UDP 请求完全绕开浏览器的 HTTP(S) 请求路径，
-// 如果代理客户端只转发 TCP/HTTP 流量、不转发 UDP，STUN 服务器看到的就是设备的
-// 真实公网 IP（typ srflx，server reflexive），跟上面三条线测出的出口 IP 不一致，
-// 这就是真实的"WebRTC 泄露"。typ host 的候选地址现代浏览器大多会用随机
-// ".local" 域名做 mDNS 混淆，不是真实 IP，直接跳过。
-function collectWebRTCIPs() {
+// WebRTC 泄露检测：每个 STUN 服务器单独开一个 RTCPeerConnection，取它回报的
+// srflx/prflx 候选地址，即这条 UDP 请求实际的公网出口。typ host 候选现代浏览器
+// 会用随机 ".local" 做 mDNS 混淆，不是真实 IP，不看。
+// 配置里有专门的 STUN 规则（proxy-config.json：DOMAIN-KEYWORD,stun 与
+// 3478/5349/19302 端口 → 中转，节点不支持 UDP 时 REJECT 兜底）；Google 的
+// STUN 会先命中 Google 规则走住宅IP。所以正确结果只可能是住宅IP或中转出口，
+// 落到本地直连出口 = 规则没生效（多见于系统代理模式，UDP 根本不经过客户端），
+// 网站能借 WebRTC 拿到真实 IP。小米那条是国内 STUN：没有 STUN 规则时它会按
+// GEOIP,CN 直连，是最能暴露问题的一路。
+var STUNS = [
+  { id: 'google',     name: 'Google',     host: 'stun.l.google.com:19302' },
+  { id: 'cloudflare', name: 'Cloudflare', host: 'stun.cloudflare.com:3478' },
+  { id: 'twilio',     name: 'Twilio',     host: 'global.stun.twilio.com:3478' },
+  { id: 'miwifi',     name: '小米（国内）', host: 'stun.miwifi.com:3478' }
+];
+var WEBRTC_OK = typeof RTCPeerConnection === 'function';
+
+function stunProbe(host) {
   return new Promise(function (resolve) {
     var pc;
-    try {
-      pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun.cloudflare.com:3478' }
-        ]
-      });
-    } catch (e) {
-      resolve({ error: '当前浏览器不支持 WebRTC，跳过此项检测' });
-      return;
-    }
-    var srflx = [];
+    try { pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:' + host }] }); }
+    catch (e) { resolve({}); return; }
     var done = false;
-    function finish() {
+    function fin(r) {
       if (done) return;
       done = true;
       try { pc.close(); } catch (e) {}
-      resolve({ srflx: srflx });
+      resolve(r);
     }
     try { pc.createDataChannel('leak-test'); } catch (e) {}
     pc.onicecandidate = function (e) {
-      if (!e.candidate) { finish(); return; }
-      var parts = e.candidate.candidate.split(' ');
-      var ip = parts[4];
-      var typIdx = parts.indexOf('typ');
-      var typ = typIdx >= 0 ? parts[typIdx + 1] : '';
-      if (!ip || ip.indexOf('.local') >= 0) return; // mDNS 混淆地址，非真实 IP
-      if (typ === 'srflx' && srflx.indexOf(ip) < 0) srflx.push(ip);
+      if (!e.candidate) { fin({}); return; }
+      var p = e.candidate.candidate.split(' ');
+      var i = p.indexOf('typ');
+      var typ = i >= 0 ? p[i + 1] : '';
+      if ((typ === 'srflx' || typ === 'prflx') && p[4] && p[4].indexOf('.local') < 0) fin({ ip: p[4] });
     };
     pc.createOffer()
-      .then(function (offer) { return pc.setLocalDescription(offer); })
-      .catch(function () { finish(); });
-    setTimeout(finish, 4000);
+      .then(function (o) { return pc.setLocalDescription(o); })
+      .catch(function () { fin({}); });
+    setTimeout(function () { fin({}); }, 5000);
   });
 }
 
-// 缓存最近一次 WebRTC 检测结果，供打码开关切换时重新渲染（跟 lastResults 是
-// 同一个用途：切换打码不重新跑检测，只重新画已有数据）
+// 本地出口优先判断：未开代理时三条线出口相同，应当算"本地"而不是"住宅IP"
+function classifyStun(ip, byId) {
+  var k = lineKey(ip);
+  function same(r) { return r && r.ip && lineKey(r.ip) === k; }
+  if (same(byId.cn)) return 'local';
+  if (same(byId.ai)) return 'ai';
+  if (same(byId.relay)) return 'relay';
+  return 'unknown';
+}
+var STUN_LABEL = {
+  ai:      { text: '走静态住宅IP', cls: 'ok' },
+  relay:   { text: '走中转', cls: 'ok' },
+  local:   { text: '⚠ 走本地直连，暴露真实 IP', cls: 'warn' },
+  proxy:   { text: '走代理出口', cls: 'ok' },
+  unknown: { text: '无法判断出口归属', cls: '' }
+};
+// IP 对不上三条线路时（常见于双栈：检测线路出口时拿到的是 IPv6，STUN 回的是
+// 同一出口的 IPv4），查归属地兜底——泄露的定义就是"暴露了国内真实 IP"，
+// 所以国内 = 泄露，境外 = 某个代理出口，查不到就不下结论
+async function ipCountry(ip) {
+  try {
+    var r = await fetchT('https://ipinfo.io/' + encodeURIComponent(ip) + '/json', {}, 5000);
+    if (!r.ok) return '';
+    var d = await r.json();
+    return (d.country || '').toUpperCase();
+  } catch (e) { return ''; }
+}
+
+function renderWebRTCRows() {
+  var html = '<div class="item parent wr-head"><span class="dot" id="dot-webrtc"></span><div class="info">'
+    + '<div class="name">WebRTC 泄露检测</div><div class="result" id="res-webrtc"></div></div></div>';
+  STUNS.forEach(function (s) {
+    html += '<div class="item child"><span class="dot" id="dot-stun-' + s.id + '"></span><div class="info">'
+      + '<div class="name">' + esc(s.name) + '<span class="host">' + esc(s.host) + '</span></div>'
+      + '<div class="result" id="res-stun-' + s.id + '"></div></div></div>';
+  });
+  $('webrtcCard').innerHTML = html;
+}
+
+// 缓存最近一次结果，打码开关切换时只重画不重测（同 lastResults）
 var lastWebRTC = null;
 function renderWebRTC() {
-  var out = $('webrtcResult');
-  if (!lastWebRTC) return;
-  if (lastWebRTC.error) {
-    out.innerHTML = '<span class="okonly">' + esc(lastWebRTC.error) + '</span>';
-    return;
-  }
-  var srflx = lastWebRTC.srflx;
-  if (srflx.length === 0) {
-    out.innerHTML = '<span class="okonly">未获取到 WebRTC 公网出口地址（该网络可能屏蔽了 UDP/STUN，属正常现象）</span>';
-    return;
-  }
-  var html = '<div class="wr-line">WebRTC 出口 IP：<span class="ipv">' + srflx.map(function (ip) { return esc(maskIp(ip)); }).join('、') + '</span></div>';
-  if (lastWebRTC.leaked.length === 0) {
-    html += '<div class="wr-line wr-ok">✓ 未检测到泄漏：WebRTC 出口与你的代理/直连出口一致</div>';
-  } else {
-    html += '<div class="wr-line wr-warn">⚠ 检测到真实 IP 可能泄漏：WebRTC 出口（' + lastWebRTC.leaked.map(function (ip) { return esc(maskIp(ip)); }).join('、')
-      + '）与上方检测到的任何出口都不一致，视频通话、部分聊天 App 等使用 WebRTC 的网站可能会看到你的真实位置</div>';
-  }
-  out.innerHTML = html;
-}
-async function checkWebRTC(byId) {
-  var box = $('webrtcCard');
-  box.style.display = 'block';
-  $('webrtcResult').textContent = '检测中…';
-  var res = await collectWebRTCIPs();
-  if (res.error) {
-    lastWebRTC = { error: res.error };
-    renderWebRTC();
-    return;
-  }
-  var srflx = res.srflx || [];
-  var exitIps = [byId.ai, byId.relay, byId.cn].filter(function (r) { return r && r.ip; }).map(function (r) { return r.ip; });
-  var leaked = srflx.filter(function (ip) {
-    return exitIps.indexOf(ip) < 0 && exitIps.every(function (e) { return lineKey(e) !== lineKey(ip); });
+  var w = lastWebRTC;
+  var head = $('res-webrtc');
+  var hd = $('dot-webrtc');
+  hd.style.background = '';
+  hd.classList.remove('on');
+  STUNS.forEach(function (s) {
+    var d = $('dot-stun-' + s.id);
+    d.style.background = '';
+    d.classList.remove('on');
+    $('res-stun-' + s.id).innerHTML = '';
   });
-  lastWebRTC = { srflx: srflx, leaked: leaked };
+  if (!w) { head.innerHTML = ''; return; }
+  if (!WEBRTC_OK) {
+    head.innerHTML = '<div class="note">当前浏览器不支持 WebRTC，网站也无法借此获取你的 IP</div>';
+    return;
+  }
+  var anyIp = false, anyLeak = false;
+  STUNS.forEach(function (s) {
+    var r = w.results[s.id];
+    var el = $('res-stun-' + s.id);
+    var d = $('dot-stun-' + s.id);
+    if (!r || !r.ip) {
+      el.innerHTML = '<span class="okonly">未返回地址（已拦截或无响应）</span>';
+      return;
+    }
+    anyIp = true;
+    var lbl = STUN_LABEL[r.line];
+    if (lbl.cls === 'warn') anyLeak = true;
+    el.innerHTML = '<span class="ipv">' + esc(maskIp(r.ip)) + '</span>'
+      + '<span class="note ' + lbl.cls + '" style="width:auto;min-height:0">' + esc(lbl.text + (r.line === 'proxy' && !MASKED ? '（' + regionLabel(r.cc) + '）' : '')) + '</span>';
+    var pd = r.line === 'ai' ? $('dot-ai') : r.line === 'relay' ? $('dot-relay') : null;
+    d.style.background = (pd && pd.style.background) || (lbl.cls === 'warn' ? '#e06c75' : lbl.cls === 'ok' ? '#66bb6a' : '');
+    if (d.style.background) d.classList.add('on');
+  });
+  var text, cls;
+  if (anyLeak) {
+    text = '⚠ 检测到 WebRTC 泄露：网站可通过 WebRTC 拿到你的真实 IP。请确认客户端开启了 TUN（虚拟网卡）模式，并使用最新生成的配置';
+    cls = 'warn';
+  } else if (anyIp) {
+    text = '✓ 未检测到泄露：WebRTC 流量同样走代理，网站拿不到你的真实 IP';
+    cls = 'ok';
+  } else {
+    text = '✓ STUN 请求均未返回地址，网站无法通过 WebRTC 获取你的 IP';
+    cls = 'ok';
+  }
+  head.innerHTML = '<div class="note ' + cls + '">' + text + '</div>';
+  hd.style.background = cls === 'ok' ? '#66bb6a' : '#e06c75';
+  hd.classList.add('on');
+}
+
+async function checkWebRTC(byId) {
+  if (!WEBRTC_OK) { lastWebRTC = { results: {} }; renderWebRTC(); return; }
+  var results = {};
+  await Promise.all(STUNS.map(async function (s) {
+    var r = await stunProbe(s.host);
+    if (r.ip) {
+      r.line = classifyStun(r.ip, byId);
+      if (r.line === 'unknown') {
+        r.cc = await ipCountry(r.ip);
+        if (r.cc === 'CN') r.line = 'local';
+        else if (r.cc) r.line = 'proxy';
+      }
+    }
+    results[s.id] = r;
+  }));
+  lastWebRTC = { results: results };
   renderWebRTC();
+  $('webrtcCard').querySelectorAll('.item').forEach(function (el) { el.style.minHeight = ''; });
 }
 
 async function runCheck() {
@@ -820,6 +885,8 @@ async function runCheck() {
     el.style.minHeight = el.getBoundingClientRect().height + 'px';
   });
   TARGETS.forEach(setPending);
+  lastWebRTC = null;
+  renderWebRTC();
   var byId = {};
   await Promise.all(TARGETS.map(async function (t) {
     var r = await probe(t);
@@ -834,6 +901,7 @@ async function runCheck() {
 }
 
 renderRows();
+renderWebRTCRows();
 $('run').addEventListener('click', runCheck);
 $('maskToggle').addEventListener('change', function () {
   MASKED = this.checked;
