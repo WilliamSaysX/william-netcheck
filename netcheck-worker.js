@@ -1000,9 +1000,10 @@ function renderDns() {
     var geo = [r.cc ? regionLabel(r.cc) : '', r.org || ''].filter(Boolean).join(' · ');
     var lbl = leak ? '⚠ 本地 DNS' : r.cc ? '远端 DNS' : '无法判断归属';
     var cls = leak ? 'warn' : r.cc ? 'ok' : '';
-    el.innerHTML = '<span class="ipv">' + esc(maskIp(r.ip)) + '</span>'
+    // 解析器是公共 DNS 服务商的地址，不是用户自己的 IP，打码开关不作用于这里
+    el.innerHTML = '<span class="ipv">' + esc(r.ip) + '</span>'
       + '<span class="note ' + cls + '" style="width:auto;min-height:0">' + esc(lbl) + '</span>'
-      + (geo ? '<span class="geo">' + esc(maskGeo(geo)) + '</span>' : '');
+      + (geo ? '<span class="geo">' + esc(geo) + '</span>' : '');
     d.style.background = leak ? '#e06c75' : cls === 'ok' ? '#66bb6a' : '';
     if (d.style.background) d.classList.add('on');
   });
@@ -1120,7 +1121,6 @@ $('maskToggle').addEventListener('change', function () {
     if (lastResults[t.id] !== undefined) setResult(t, lastResults[t.id]);
   });
   renderWebRTC();
-  renderDns();
 });
 setTimeout(runCheck, 50);
 </script>
