@@ -1114,8 +1114,18 @@ renderRows();
 renderWebRTCRows();
 renderDnsRows();
 $('run').addEventListener('click', runCheck);
+// 记住打码开关：默认关闭，用户打开过就一直保持（截图/录屏的人不用每次都点）。
+// 隐私窗口等场景 localStorage 可能不可用，读写都要兜住
+var MASK_KEY = 'netcheck-mask';
+try {
+  if (localStorage.getItem(MASK_KEY) === '1') {
+    MASKED = true;
+    $('maskToggle').checked = true;
+  }
+} catch (e) {}
 $('maskToggle').addEventListener('change', function () {
   MASKED = this.checked;
+  try { localStorage.setItem(MASK_KEY, MASKED ? '1' : '0'); } catch (e) {}
   // 不重新检测，只用已有结果重新渲染，打码/取消打码瞬间完成
   TARGETS.forEach(function (t) {
     if (lastResults[t.id] !== undefined) setResult(t, lastResults[t.id]);
