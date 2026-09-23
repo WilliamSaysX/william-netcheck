@@ -203,10 +203,11 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 }
 .mask-toggle input:checked + .slider { background: #34c759; }
 .mask-toggle input:checked + .slider::before { transform: translateX(16px); }
-/* WebRTC 卡片复用 .group/.item 结构；头部不需要父行那么高的固定高度 */
-.wr-card { margin-top: 16px; }
+/* 泄露检测卡片复用 .group/.item 结构；头部不需要父行那么高的固定高度。
+   结论固定按 2 行留高、子行统一高度，桌面端两张卡并排时才能对齐 */
+.leaks { margin-top: 16px; }
 .item.parent.wr-head { min-height: 0; }
-.wr-head .note { min-height: 0; }
+.leaks .item.child { min-height: 94px; }
 .foot { margin-top: auto; padding-top: 28px; font-size: 11px; color: #6b6b80; line-height: 1.7; text-align: center; }
 .foot a { color: #61afef; text-decoration: none; }
 .foot-pc { display: none; } /* 插件推荐仅在电脑端显示 */
@@ -243,6 +244,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   }
   .group { margin-bottom: 0; padding: 8px 20px; }
   .item.child { margin-left: 8px; padding-left: 14px; }
+  .leaks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   .summary { margin-bottom: 18px; }
 }
 /* 超宽屏：同样三条线路一行排开，只是整体更宽松 */
@@ -264,8 +266,10 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <label class="mask-toggle"><span>隐藏 IP/地区</span><input type="checkbox" id="maskToggle"><span class="slider"></span></label>
 </div>
 <div class="groups" id="list"></div>
-<div class="group wr-card" id="webrtcCard"></div>
-<div class="group wr-card" id="dnsCard"></div>
+<div class="leaks">
+  <div class="group" id="dnsCard"></div>
+  <div class="group" id="webrtcCard"></div>
+</div>
 <div class="foot">
   <div>检测基于「威廉的 AI Club」配置规则，第三方配置仅供参考</div>
   <div class="foot-pc">电脑端可安装 <a href="https://chromewebstore.google.com/search/%E5%A8%81%E5%BB%89%E7%9A%84%20AI%20Club" target="_blank">AI 工具箱浏览器插件</a>，一键生成分流配置</div>
