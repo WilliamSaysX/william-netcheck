@@ -252,7 +252,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <h1>🌐 网络分流检测</h1>
   <div class="sub">威廉的 AI Club · 手机 / 电脑 / 软路由下的任意设备均可检测</div>
 </div>
-<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。<br>同时检测 DNS 与 WebRTC 泄露：确认运营商看不到你访问了哪些境外网站，网站也拿不到你的真实 IP。</div>
+<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。<br>同时检测 DNS 与 WebRTC 泄露：确认 DNS 解析和实时连接同样按分流规则走。</div>
 <div class="summary" id="summary"><div class="headline">检测中…</div></div>
 <div class="mask-row">
   <button class="btn" id="run">开始检测</button>
@@ -705,7 +705,7 @@ function verdict(byId) {
     } else if (lockMode) {
       addNote('relay', '⚠ 开着锁定模式，但这次测出的出口跟住宅IP不一致，建议重新生成配置', 'warn');
     } else if (relayK && aiK && relayK !== aiK) {
-      addNote('relay', '✓ 与住宅IP分开走，被墙站点不消耗住宅IP流量', 'ok');
+      addNote('relay', '✓ 与住宅IP分开走，日常上网不消耗住宅IP流量', 'ok');
     }
     if (cnK) {
       addNote('cn', '✓ 走直连，不占用任何代理流量，速度最快', 'ok');
@@ -769,7 +769,7 @@ function classifyStun(ip, byId) {
 var STUN_LABEL = {
   ai:      { text: '走静态住宅IP', cls: 'ok' },
   relay:   { text: '走中转', cls: 'ok' },
-  local:   { text: '⚠ 走本地直连，暴露真实 IP', cls: 'warn' },
+  local:   { text: '⚠ 走本地直连', cls: 'warn' },
   proxy:   { text: '走代理出口', cls: 'ok' },
   unknown: { text: '无法判断出口归属', cls: '' }
 };
@@ -835,10 +835,10 @@ function renderWebRTC() {
   });
   var text, cls;
   if (anyLeak) {
-    text = '⚠ 检测到 WebRTC 泄露：网站可通过 WebRTC 拿到你的真实 IP。请确认客户端开启了 TUN（虚拟网卡）模式，并使用最新生成的配置';
+    text = '⚠ 检测到 WebRTC 泄露：实时连接（视频通话等）没按分流规则走，可能影响 AI 账号稳定。请确认客户端开启了 TUN 模式';
     cls = 'warn';
   } else if (anyIp) {
-    text = '✓ 未检测到泄露：WebRTC 流量同样走代理，网站拿不到你的真实 IP';
+    text = '✓ 未检测到泄露：实时连接同样按分流规则走';
     cls = 'ok';
   } else {
     text = '✓ STUN 请求均未返回地址，网站无法通过 WebRTC 获取你的 IP';
@@ -962,7 +962,7 @@ function renderDns() {
     var leak = r.cc === 'CN';
     if (leak) anyLeak = true;
     var geo = [r.cc ? regionLabel(r.cc) : '', r.org || ''].filter(Boolean).join(' · ');
-    var lbl = leak ? '⚠ 国内 DNS' : r.cc ? '境外 DNS' : '无法判断归属';
+    var lbl = leak ? '⚠ 本地 DNS' : r.cc ? '远端 DNS' : '无法判断归属';
     var cls = leak ? 'warn' : r.cc ? 'ok' : '';
     el.innerHTML = '<span class="ipv">' + esc(maskIp(r.ip)) + '</span>'
       + '<span class="note ' + cls + '" style="width:auto;min-height:0">' + esc(lbl) + '</span>'
@@ -972,10 +972,10 @@ function renderDns() {
   });
   var text, cls;
   if (anyLeak) {
-    text = '⚠ 检测到 DNS 泄露：境外域名交给了国内 DNS 解析，运营商能看到你访问了哪些境外网站，也可能遭遇 DNS 污染。请使用最新生成的配置';
+    text = '⚠ 检测到 DNS 泄露：部分域名解析没按配置走，可能导致网站打不开或解析异常。请使用最新生成的配置';
     cls = 'warn';
   } else if (anyIp) {
-    text = '✓ 未检测到泄露：境外域名均由境外 DNS 解析，运营商看不到你访问了哪些境外网站';
+    text = '✓ 未检测到泄露：DNS 解析按配置走，没有被本地 DNS 接管';
     cls = 'ok';
   } else {
     text = '检测服务均无响应，可点「重新检测」重试';
