@@ -199,6 +199,9 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 /* 泄露检测卡片复用 .group/.item 结构；头部不需要父行那么高的固定高度。
    结论固定按 2 行留高、子行统一高度，桌面端两张卡并排时才能对齐 */
 .leaks { margin-top: 16px; }
+.upsell { margin-top: 8px; font-size: 13px; line-height: 1.6; color: #c7cbe0; }
+.upsell a { color: #61afef; text-decoration: none; margin-left: 6px; white-space: nowrap; }
+.upsell-sub { display: block; font-size: 11px; color: #7b8499; margin-top: 2px; }
 .item.parent.wr-head { min-height: 0; }
 .leaks .item.child { min-height: 94px; }
 .foot { margin-top: auto; padding-top: 28px; font-size: 11px; color: #6b6b80; line-height: 1.7; text-align: center; }
@@ -619,12 +622,16 @@ function verdict(byId) {
   var noProxy = (ai && ai.cc === 'CN') || (!ai && !aiOk && relay && relay.cc === 'CN');
   // 国内网站没直连（客户端开了全局，或配置有问题）
   var cnProxied = cn && cn.cc && cn.cc !== 'CN';
+  // 基础版脚本：MATCH 全部走住宅IP，三条线出口相同且在境外——这是基础版的
+  // 正常形态，不能按"国内没直连"报错。客户端开全局模式也是同样特征，分不开，
+  // 所以提示里顺带提一句"规则"模式
+  var basicMode = cnProxied && aiK && relayK && cnK && aiK === relayK && relayK === cnK;
   // 锁定境外出口模式：两条境外线路收敛到同一出口，直连仍是本地
   var lockMode = aiK && relayK && aiK === relayK && cnK && aiK !== cnK;
   // 🚨 境外规则集失效：中转线塌陷回本地出口 → 部分境外站点会打不开（AI 线仍正常，
   // 所以症状是"只有国内和 AI 站点能用"，安卓 FlClash 上真实出现过）
   var rulesetDown = relayK && cnK && relayK === cnK && aiK && aiK !== relayK;
-  var headline, cls;
+  var headline, cls, extra = '';
 
   if (order.length === 0) {
     headline = (cn || (byId.cn && byId.cn.ok))
@@ -634,6 +641,12 @@ function verdict(byId) {
   } else if (noProxy) {
     headline = '⚠ 未检测到代理：AI 站点走的是国内出口，无法正常使用。请先开启代理客户端再检测';
     cls = 'warn';
+  } else if (basicMode) {
+    headline = '✓ 基础版生效中：所有网站统一走静态住宅IP';
+    cls = 'ok';
+    extra = '<div class="upsell">升级增强版可实现三段分流：日常上网走中转、国内网站直连，速度更快，也更省住宅IP流量。'
+      + '<a href="https://williamsays.com/landing?src=netcheck" target="_blank">了解增强版 →</a>'
+      + '<span class="upsell-sub">已在用增强版？请把客户端切回「规则」模式后重新检测</span></div>';
   } else if (cnProxied) {
     headline = '⚠ 国内网站没有直连（出口在境外），流量与速度都会被浪费。请确认客户端处于「规则」模式';
     cls = 'warn';
@@ -674,7 +687,7 @@ function verdict(byId) {
       }
     });
   });
-  summary.innerHTML = '<div class="headline ' + cls + '">' + headline + '</div>';
+  summary.innerHTML = '<div class="headline ' + cls + '">' + headline + '</div>' + extra;
   summary.style.display = 'block';
 
   // 子行圆点继承父行线路颜色（连通性子行本身不带 IP）
@@ -690,6 +703,11 @@ function verdict(byId) {
 
   // 行级标注（未开代理 / 国内被代理属全局性异常，此时不再逐行解释）。
   // 三张卡片都配一条结论，行数、行高对齐，视觉上不会有的卡片矮一截
+  if (basicMode) {
+    addNote('ai', '✓ 走静态住宅IP，AI 账号更不容易被风控或封禁', 'ok');
+    addNote('relay', '基础版不分流，日常上网同样走住宅IP');
+    addNote('cn', '基础版不分流，国内网站也走住宅IP（增强版会直连）');
+  }
   if (!noProxy && !cnProxied) {
     if (!ai && aiOk) {
       addNote('ai', 'AI 出口读取失败（不影响站点使用），可点「重新检测」重试', 'warn');
@@ -761,7 +779,7 @@ function stunProbe(host) {
 function classifyStun(ip, byId) {
   var k = lineKey(ip);
   function same(r) { return r && r.ip && lineKey(r.ip) === k; }
-  if (same(byId.cn)) return 'local';
+  if (byId.cn && byId.cn.cc === 'CN' && same(byId.cn)) return 'local';
   if (same(byId.ai)) return 'ai';
   if (same(byId.relay)) return 'relay';
   return 'unknown';
