@@ -645,7 +645,7 @@ function verdict(byId) {
     headline = '✓ 基础版生效中：所有网站统一走静态住宅IP';
     cls = 'ok';
     extra = '<div class="upsell">升级增强版可实现三段分流：日常上网走中转、国内网站直连，速度更快，也更省住宅IP流量。'
-      + '<a href="https://williamsays.com/landing?src=netcheck" target="_blank">了解增强版 →</a>'
+      + '<a href="https://williamsays.com/landing?src=netcheck" target="_blank">加入社群解锁增强版 →</a>'
       + '<span class="upsell-sub">已在用增强版？请把客户端切回「规则」模式后重新检测</span></div>';
   } else if (cnProxied) {
     headline = '⚠ 国内网站没有直连（出口在境外），流量与速度都会被浪费。请确认客户端处于「规则」模式';
