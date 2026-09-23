@@ -203,6 +203,10 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 }
 .mask-toggle input:checked + .slider { background: #34c759; }
 .mask-toggle input:checked + .slider::before { transform: translateX(16px); }
+/* WebRTC 泄露检测卡片：复用 .card 的外观，结论文字单独配色 */
+.wr-line { margin-bottom: 6px; }
+.wr-ok { color: #7ed99a; }
+.wr-warn { color: #ffd27a; }
 .foot { margin-top: auto; padding-top: 28px; font-size: 11px; color: #6b6b80; line-height: 1.7; text-align: center; }
 .foot a { color: #61afef; text-decoration: none; }
 .foot-pc { display: none; } /* 插件推荐仅在电脑端显示 */
@@ -260,6 +264,10 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <label class="mask-toggle"><span>隐藏 IP/地区</span><input type="checkbox" id="maskToggle"><span class="slider"></span></label>
 </div>
 <div class="groups" id="list"></div>
+<div class="card" id="webrtcCard" style="display:none">
+  <div style="font-weight:700;color:#fff;margin-bottom:8px;">🔒 WebRTC 泄露检测</div>
+  <div id="webrtcResult">检测中…</div>
+</div>
 <div class="foot">
   <div>检测基于「威廉的 AI Club」配置规则，第三方配置仅供参考</div>
   <div class="foot-pc">电脑端可安装 <a href="https://chromewebstore.google.com/search/%E5%A8%81%E5%BB%89%E7%9A%84%20AI%20Club" target="_blank">AI 工具箱浏览器插件</a>，一键生成分流配置</div>
@@ -710,6 +718,94 @@ function verdict(byId) {
   }
 }
 
+// WebRTC 泄露检测：创建一个 RTCPeerConnection，指定公开 STUN 服务器，靠它发起
+// UDP 打洞得到 ICE candidate。这条 UDP 请求完全绕开浏览器的 HTTP(S) 请求路径，
+// 如果代理客户端只转发 TCP/HTTP 流量、不转发 UDP，STUN 服务器看到的就是设备的
+// 真实公网 IP（typ srflx，server reflexive），跟上面三条线测出的出口 IP 不一致，
+// 这就是真实的"WebRTC 泄露"。typ host 的候选地址现代浏览器大多会用随机
+// ".local" 域名做 mDNS 混淆，不是真实 IP，直接跳过。
+function collectWebRTCIPs() {
+  return new Promise(function (resolve) {
+    var pc;
+    try {
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' }
+        ]
+      });
+    } catch (e) {
+      resolve({ error: '当前浏览器不支持 WebRTC，跳过此项检测' });
+      return;
+    }
+    var srflx = [];
+    var done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      try { pc.close(); } catch (e) {}
+      resolve({ srflx: srflx });
+    }
+    try { pc.createDataChannel('leak-test'); } catch (e) {}
+    pc.onicecandidate = function (e) {
+      if (!e.candidate) { finish(); return; }
+      var parts = e.candidate.candidate.split(' ');
+      var ip = parts[4];
+      var typIdx = parts.indexOf('typ');
+      var typ = typIdx >= 0 ? parts[typIdx + 1] : '';
+      if (!ip || ip.indexOf('.local') >= 0) return; // mDNS 混淆地址，非真实 IP
+      if (typ === 'srflx' && srflx.indexOf(ip) < 0) srflx.push(ip);
+    };
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .catch(function () { finish(); });
+    setTimeout(finish, 4000);
+  });
+}
+
+// 缓存最近一次 WebRTC 检测结果，供打码开关切换时重新渲染（跟 lastResults 是
+// 同一个用途：切换打码不重新跑检测，只重新画已有数据）
+var lastWebRTC = null;
+function renderWebRTC() {
+  var out = $('webrtcResult');
+  if (!lastWebRTC) return;
+  if (lastWebRTC.error) {
+    out.innerHTML = '<span class="okonly">' + esc(lastWebRTC.error) + '</span>';
+    return;
+  }
+  var srflx = lastWebRTC.srflx;
+  if (srflx.length === 0) {
+    out.innerHTML = '<span class="okonly">未获取到 WebRTC 公网出口地址（该网络可能屏蔽了 UDP/STUN，属正常现象）</span>';
+    return;
+  }
+  var html = '<div class="wr-line">WebRTC 出口 IP：<span class="ipv">' + srflx.map(function (ip) { return esc(maskIp(ip)); }).join('、') + '</span></div>';
+  if (lastWebRTC.leaked.length === 0) {
+    html += '<div class="wr-line wr-ok">✓ 未检测到泄漏：WebRTC 出口与你的代理/直连出口一致</div>';
+  } else {
+    html += '<div class="wr-line wr-warn">⚠ 检测到真实 IP 可能泄漏：WebRTC 出口（' + lastWebRTC.leaked.map(function (ip) { return esc(maskIp(ip)); }).join('、')
+      + '）与上方检测到的任何出口都不一致，视频通话、部分聊天 App 等使用 WebRTC 的网站可能会看到你的真实位置</div>';
+  }
+  out.innerHTML = html;
+}
+async function checkWebRTC(byId) {
+  var box = $('webrtcCard');
+  box.style.display = 'block';
+  $('webrtcResult').textContent = '检测中…';
+  var res = await collectWebRTCIPs();
+  if (res.error) {
+    lastWebRTC = { error: res.error };
+    renderWebRTC();
+    return;
+  }
+  var srflx = res.srflx || [];
+  var exitIps = [byId.ai, byId.relay, byId.cn].filter(function (r) { return r && r.ip; }).map(function (r) { return r.ip; });
+  var leaked = srflx.filter(function (ip) {
+    return exitIps.indexOf(ip) < 0 && exitIps.every(function (e) { return lineKey(e) !== lineKey(ip); });
+  });
+  lastWebRTC = { srflx: srflx, leaked: leaked };
+  renderWebRTC();
+}
+
 async function runCheck() {
   if (running) return;
   running = true;
@@ -731,6 +827,7 @@ async function runCheck() {
     setResult(t, r);
   }));
   verdict(byId);
+  checkWebRTC(byId);
   btn.disabled = false;
   btn.textContent = '\\u91cd\\u65b0\\u68c0\\u6d4b';
   running = false;
@@ -744,6 +841,7 @@ $('maskToggle').addEventListener('change', function () {
   TARGETS.forEach(function (t) {
     if (lastResults[t.id] !== undefined) setResult(t, lastResults[t.id]);
   });
+  renderWebRTC();
 });
 setTimeout(runCheck, 50);
 </script>
