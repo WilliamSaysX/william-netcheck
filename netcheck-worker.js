@@ -1,24 +1,17 @@
 // ================================================================
 // netcheck-worker.js — 网络分流检测 · 网页版（独立 Worker，不影响主 Worker）
 //
-// 【探针全部使用第三方真实站点，不再自建探针域名】
-// 旧版靠自建域名 + "域名关键字诱饵" 来探线路，依赖的是"未命中规则 → 兜底走
-// 机场"这一前提；新版配置已改成 MATCH → DIRECT（省流量），该前提不再成立，
-// 自建探针会全部掉进直连，判定必然误报"未检测到代理"。
+// 【分流检测】三条线路各用一个「本身就会命中对应规则」的真实站点测出口：
+//   静态住宅IP出口  claude.ai/cdn-cgi/trace       DOMAIN-KEYWORD,claude → 住宅IP
+//   日常上网出口    api.ipify.org/cdn-cgi/trace   在 gfw.txt → RULE-SET,overseas → 中转
+//   直连出口        myip.ipip.net                 GEOIP,CN / MATCH,DIRECT → 本地
+// 不用自建诱饵域名：配置兜底是 MATCH,DIRECT，自建域名会全部掉进直连。
+// 中转出口塌陷到本地 = 境外规则集失效（安卓 FlClash 上出现过）。
+// /cdn-cgi/trace 带 access-control-allow-origin: *，浏览器可直接跨域读取。
 //
-// 新方案改测四条线路的真实出口，每个探针都是「本身就会命中对应规则」的真站点：
-//   🏠 AI 专线      claude.ai/cdn-cgi/trace       命中 DOMAIN-KEYWORD,claude → 住宅IP
-//   ✈️ 国际中转      api.ipify.org/cdn-cgi/trace   在 gfw.txt → RULE-SET,overseas → 机场
-//   🔗 未分类境外    ipinfo.io/json                不命中任何规则 → MATCH,DIRECT → 本地
-//   🇨🇳 国内直连     myip.ipip.net                 GEOIP,CN → 本地
-//
-// 比诱饵域名更可信：测的是真实业务站点走哪条线，而不只是"规则能不能匹配"。
-// 三条线路出口 IP 互不相同 = 三线分流生效；中转出口塌陷到本地 = 境外规则集失效
-// （安卓 FlClash 上出现过的故障：除国内与 AI 站点外全部打不开）。
-//
-// Cloudflare 站点的 /cdn-cgi/trace 会回显 ip/loc/colo 且响应带
-// access-control-allow-origin: *，浏览器可直接跨域读取（claude.ai 与
-// api.ipify.org 均已实测）。ipinfo.io 额外给出城市与运营商。
+// 【泄露检测】全部在浏览器里完成，不经过本 Worker：
+//   DNS：调用 Fastly / Surfshark / ipleak / bash.ws 的公开检测接口，解析器在国内 = 泄露
+//   WebRTC：4 个 STUN 服务器回报的出口落在本地直连 = 泄露（住宅IP/中转均正常）
 //
 // check.williamsays.uk 现仅用于托管本检测页；claude-check / googlevideo-check
 // 两个 Custom Domain 已无用途，可随时下线。
@@ -259,7 +252,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <h1>🌐 网络分流检测</h1>
   <div class="sub">威廉的 AI Club · 手机 / 电脑 / 软路由下的任意设备均可检测</div>
 </div>
-<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。</div>
+<div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。<br>同时检测 DNS 与 WebRTC 泄露：确认运营商看不到你访问了哪些境外网站，网站也拿不到你的真实 IP。</div>
 <div class="summary" id="summary"><div class="headline">检测中…</div></div>
 <div class="mask-row">
   <button class="btn" id="run">开始检测</button>
@@ -852,6 +845,8 @@ function renderWebRTC() {
     cls = 'ok';
   }
   head.innerHTML = '<div class="note ' + cls + '">' + text + '</div>';
+  w.leak = anyLeak;
+  updateLeakSummary();
   hd.style.background = cls === 'ok' ? '#66bb6a' : '#e06c75';
   hd.classList.add('on');
 }
@@ -987,6 +982,8 @@ function renderDns() {
     cls = '';
   }
   head.innerHTML = '<div class="note ' + cls + '">' + text + '</div>';
+  w.leak = anyLeak;
+  updateLeakSummary();
   if (cls) {
     hd.style.background = cls === 'ok' ? '#66bb6a' : '#e06c75';
     hd.classList.add('on');
@@ -1008,6 +1005,24 @@ async function checkDns() {
   lastDns = { results: results };
   renderDns();
   $('dnsCard').querySelectorAll('.item').forEach(function (el) { el.style.minHeight = ''; });
+}
+
+// 顶部结论只算分流；泄露检测晚于分流出结果，发现泄露时在结论下补一行，
+// 避免顶部写着"完全正常"、下面卡片却在报泄露
+function updateLeakSummary() {
+  var el = $('leakLine');
+  var items = [];
+  if (lastDns && lastDns.leak) items.push('DNS 泄露');
+  if (lastWebRTC && lastWebRTC.leak) items.push('WebRTC 泄露');
+  if (!items.length) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'leakLine';
+    el.className = 'headline warn';
+    el.style.marginTop = '4px';
+    $('summary').appendChild(el);
+  }
+  el.textContent = '⚠ 另外检测到 ' + items.join('、') + '，详见下方';
 }
 
 async function runCheck() {
