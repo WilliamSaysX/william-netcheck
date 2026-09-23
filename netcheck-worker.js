@@ -199,6 +199,17 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 /* 泄露检测卡片复用 .group/.item 结构；头部不需要父行那么高的固定高度。
    结论固定按 2 行留高、子行统一高度，桌面端两张卡并排时才能对齐 */
 .leaks { margin-top: 16px; }
+/* 检测过程动效：等待中圆点呼吸，结果到达时内容淡入。只在真实检测时触发，
+   切换打码开关重绘不会重播 */
+.dot.pending { background: rgba(97, 175, 239, 0.55); animation: dotPulse 1.1s ease-in-out infinite; }
+@keyframes dotPulse { 0%, 100% { opacity: 0.25; transform: scale(0.75); } 50% { opacity: 1; transform: scale(1.15); } }
+.headline.loading { color: #8b95ab; animation: textPulse 1.4s ease-in-out infinite; }
+@keyframes textPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.item.reveal .result, .item.reveal .lat { animation: fadeUp 0.35s ease-out; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .dot.pending, .headline.loading, .item.reveal .result, .item.reveal .lat { animation: none; }
+}
 .upsell { margin-top: 8px; font-size: 13px; line-height: 1.6; color: #c7cbe0; }
 .upsell a { color: #61afef; text-decoration: none; margin-left: 6px; white-space: nowrap; }
 .upsell-sub { display: block; font-size: 11px; color: #7b8499; margin-top: 2px; }
@@ -256,7 +267,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
   <div class="sub">威廉的 AI Club · 分流 / DNS / WebRTC 一次测完 · 手机 / 电脑 / 软路由均可检测</div>
 </div>
 <div class="card">从当前设备直接访问各真实站点，完整经过你的分流规则。<br>增强版应为三段分流：AI 站点走「静态住宅IP」，日常上网走「中转」，其余网站均走直连（省流量）。<br>同时检测 DNS 与 WebRTC 泄露：确认 DNS 解析和实时连接同样按分流规则走。</div>
-<div class="summary" id="summary"><div class="headline">检测中…</div></div>
+<div class="summary" id="summary"><div class="headline loading">检测中…</div></div>
 <div class="mask-row">
   <button class="btn" id="run">开始检测</button>
   <label class="mask-toggle"><span>隐藏 IP/地区</span><input type="checkbox" id="maskToggle"><span class="slider"></span></label>
@@ -499,6 +510,7 @@ function setPending(t) {
   var d = $('dot-' + t.id);
   d.style.background = '';
   d.classList.remove('on');
+  d.classList.add('pending');
   // 新一轮检测开始，把上一轮缓存的结论清掉——不然 setResult() 会在
   // verdict() 算出新结论之前，先把上一轮的旧结论重新贴回去，等 verdict()
   // 再贴一条新的，就会看到同一条结论重复两遍。
@@ -870,7 +882,12 @@ function renderWebRTC() {
 }
 
 async function checkWebRTC(byId) {
-  if (!WEBRTC_OK) { lastWebRTC = { results: {} }; renderWebRTC(); return; }
+  if (!WEBRTC_OK) {
+    lastWebRTC = { results: {} };
+    renderWebRTC();
+    $('webrtcCard').querySelectorAll('.item').forEach(reveal);
+    return;
+  }
   var results = {};
   await Promise.all(STUNS.map(async function (s) {
     var r = await stunProbe(s.host);
@@ -886,6 +903,7 @@ async function checkWebRTC(byId) {
   }));
   lastWebRTC = { results: results };
   renderWebRTC();
+  $('webrtcCard').querySelectorAll('.item').forEach(reveal);
   $('webrtcCard').querySelectorAll('.item').forEach(function (el) { el.style.minHeight = ''; });
 }
 
@@ -1022,6 +1040,7 @@ async function checkDns() {
   }));
   lastDns = { results: results };
   renderDns();
+  $('dnsCard').querySelectorAll('.item').forEach(reveal);
   $('dnsCard').querySelectorAll('.item').forEach(function (el) { el.style.minHeight = ''; });
 }
 
@@ -1043,6 +1062,18 @@ function updateLeakSummary() {
   el.textContent = '⚠ 另外检测到 ' + items.join('、') + '，详见下方';
 }
 
+function reveal(row) {
+  if (!row) return;
+  var d = row.querySelector('.dot');
+  if (d) d.classList.remove('pending');
+  row.classList.remove('reveal');
+  void row.offsetWidth; // 强制重排，同一行再次检测时动画能重新播放
+  row.classList.add('reveal');
+}
+function setCardPending(id, on) {
+  $(id).querySelectorAll('.dot').forEach(function (d) { d.classList.toggle('pending', on); });
+}
+
 async function runCheck() {
   if (running) return;
   running = true;
@@ -1051,7 +1082,7 @@ async function runCheck() {
   btn.textContent = '\\u68c0\\u6d4b\\u4e2d\\u2026';
   // 汇总区不隐藏（避免页面高度跳动），显示检测中占位
   var s = $('summary');
-  s.innerHTML = '<div class="headline">检测中…</div>';
+  s.innerHTML = '<div class="headline loading">检测中…</div>';
   // 清空前把每行高度冻结在当前值，新结果填入时再解冻——重新检测全程零跳动
   document.querySelectorAll('.item').forEach(function (el) {
     el.style.minHeight = el.getBoundingClientRect().height + 'px';
@@ -1061,11 +1092,14 @@ async function runCheck() {
   renderWebRTC();
   lastDns = null;
   renderDns();
+  setCardPending('webrtcCard', true);
+  setCardPending('dnsCard', true);
   var byId = {};
   await Promise.all(TARGETS.map(async function (t) {
     var r = await probe(t);
     byId[t.id] = r;
     setResult(t, r);
+    reveal($('res-' + t.id).closest('.item'));
   }));
   verdict(byId);
   checkWebRTC(byId);
