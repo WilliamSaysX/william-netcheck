@@ -265,6 +265,7 @@ h1 { font-size: 19px; color: #fff; display: flex; align-items: center; gap: 8px;
 </div>
 <div class="groups" id="list"></div>
 <div class="group wr-card" id="webrtcCard"></div>
+<div class="group wr-card" id="dnsCard"></div>
 <div class="foot">
   <div>检测基于「威廉的 AI Club」配置规则，第三方配置仅供参考</div>
   <div class="foot-pc">电脑端可安装 <a href="https://chromewebstore.google.com/search/%E5%A8%81%E5%BB%89%E7%9A%84%20AI%20Club" target="_blank">AI 工具箱浏览器插件</a>，一键生成分流配置</div>
@@ -871,6 +872,140 @@ async function checkWebRTC(byId) {
   $('webrtcCard').querySelectorAll('.item').forEach(function (el) { el.style.minHeight = ''; });
 }
 
+// DNS 泄露检测：访问一个随机子域名，对方的权威 DNS 会记下是哪台解析器来查的，
+// 再通过接口把解析器 IP 回给我们（与 ipcheck.ing 相同，调用公开的检测服务，
+// 不自建 DNS）。随机子域名不在 geosite:cn 里，按配置应由境外 DNS 经中转解析；
+// 解析器落在国内 = DNS 泄露（运营商能看到访问了哪些境外域名，也会遭 DNS 污染）。
+// 各家互相独立，一家挂了不影响其他行。
+function rndLabel(n) {
+  var abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  var b = new Uint8Array(n);
+  crypto.getRandomValues(b);
+  var s = '';
+  for (var i = 0; i < n; i++) s += abc[b[i] % abc.length];
+  return s;
+}
+var DNS_PROVIDERS = [
+  { id: 'fastly', name: 'Fastly', host: 'fastly-analytics.com', run: async function () {
+    var r = await fetchT('https://' + Date.now() + rndLabel(9) + '.u.fastly-analytics.com/debug_resolver', {}, 8000);
+    var d = await r.json();
+    var i = d.dns_resolver_info || {};
+    return { ip: i.ip, cc: (i.cc || '').toUpperCase(), org: (i.as_name || '').replace(/,\\s*[A-Z]{2}$/, '') };
+  } },
+  { id: 'surfshark', name: 'Surfshark', host: 'surfsharkdns.com', run: async function () {
+    var r = await fetchT('https://jn32' + rndLabel(9) + '.ipv4.surfsharkdns.com', {}, 8000);
+    var d = await r.json();
+    for (var k in d) { if (d[k] && d[k].IP) return { ip: d[k].IP }; }
+    return {};
+  } },
+  { id: 'ipleak', name: 'ipleak', host: 'ipleak.net', run: async function () {
+    var r = await fetchT('https://' + rndLabel(40) + '-1.ipleak.net/dnsdetection/', {}, 8000);
+    var d = await r.json();
+    var top = null, n = -1;
+    for (var ip in (d.ip || {})) { if (Number(d.ip[ip]) > n) { n = Number(d.ip[ip]); top = ip; } }
+    return { ip: top };
+  } },
+  { id: 'bashws', name: 'bash.ws', host: 'bash.ws', run: async function () {
+    var id = (await (await fetchT('https://bash.ws/id', {}, 8000)).text()).trim();
+    if (!/^[a-z0-9]{1,63}$/i.test(id)) return {};
+    // 只为触发一次 DNS 解析，TLS/请求本身失败无所谓
+    try { await fetchT('https://ex.1.' + id + '.bash.ws/css/z.css', { mode: 'no-cors' }, 2500); } catch (e) {}
+    var list = await (await fetchT('https://bash.ws/dnsleak/test/' + id + '?json', {}, 8000)).json();
+    var hit = (list || []).filter(function (x) { return x && x.type === 'dns' && x.ip; })[0];
+    return hit ? { ip: hit.ip } : {};
+  } }
+];
+
+async function ipGeo(ip) {
+  try {
+    var r = await fetchT('https://ipinfo.io/' + encodeURIComponent(ip) + '/json', {}, 5000);
+    if (!r.ok) return {};
+    var d = await r.json();
+    return { cc: (d.country || '').toUpperCase(), org: (d.org || '').replace(/^AS\\d+\\s+/, '') };
+  } catch (e) { return {}; }
+}
+
+function renderDnsRows() {
+  var html = '<div class="item parent wr-head"><span class="dot" id="dot-dns"></span><div class="info">'
+    + '<div class="name">DNS 泄露检测</div><div class="result" id="res-dns"></div></div></div>';
+  DNS_PROVIDERS.forEach(function (p) {
+    html += '<div class="item child"><span class="dot" id="dot-dnsp-' + p.id + '"></span><div class="info">'
+      + '<div class="name">' + esc(p.name) + '<span class="host">' + esc(p.host) + '</span></div>'
+      + '<div class="result" id="res-dnsp-' + p.id + '"></div></div></div>';
+  });
+  $('dnsCard').innerHTML = html;
+}
+
+var lastDns = null;
+function renderDns() {
+  var w = lastDns;
+  var head = $('res-dns');
+  var hd = $('dot-dns');
+  hd.style.background = '';
+  hd.classList.remove('on');
+  DNS_PROVIDERS.forEach(function (p) {
+    var d = $('dot-dnsp-' + p.id);
+    d.style.background = '';
+    d.classList.remove('on');
+    $('res-dnsp-' + p.id).innerHTML = '';
+  });
+  if (!w) { head.innerHTML = ''; return; }
+  var anyIp = false, anyLeak = false;
+  DNS_PROVIDERS.forEach(function (p) {
+    var r = w.results[p.id];
+    var el = $('res-dnsp-' + p.id);
+    var d = $('dot-dnsp-' + p.id);
+    if (!r || !r.ip) {
+      el.innerHTML = '<span class="okonly">未返回结果（服务无响应）</span>';
+      return;
+    }
+    anyIp = true;
+    var leak = r.cc === 'CN';
+    if (leak) anyLeak = true;
+    var geo = [r.cc ? regionLabel(r.cc) : '', r.org || ''].filter(Boolean).join(' · ');
+    var lbl = leak ? '⚠ 国内 DNS' : r.cc ? '境外 DNS' : '无法判断归属';
+    var cls = leak ? 'warn' : r.cc ? 'ok' : '';
+    el.innerHTML = '<span class="ipv">' + esc(maskIp(r.ip)) + '</span>'
+      + '<span class="note ' + cls + '" style="width:auto;min-height:0">' + esc(lbl) + '</span>'
+      + (geo ? '<span class="geo">' + esc(maskGeo(geo)) + '</span>' : '');
+    d.style.background = leak ? '#e06c75' : cls === 'ok' ? '#66bb6a' : '';
+    if (d.style.background) d.classList.add('on');
+  });
+  var text, cls;
+  if (anyLeak) {
+    text = '⚠ 检测到 DNS 泄露：境外域名交给了国内 DNS 解析，运营商能看到你访问了哪些境外网站，也可能遭遇 DNS 污染。请使用最新生成的配置';
+    cls = 'warn';
+  } else if (anyIp) {
+    text = '✓ 未检测到泄露：境外域名均由境外 DNS 解析，运营商看不到你访问了哪些境外网站';
+    cls = 'ok';
+  } else {
+    text = '检测服务均无响应，可点「重新检测」重试';
+    cls = '';
+  }
+  head.innerHTML = '<div class="note ' + cls + '">' + text + '</div>';
+  if (cls) {
+    hd.style.background = cls === 'ok' ? '#66bb6a' : '#e06c75';
+    hd.classList.add('on');
+  }
+}
+
+async function checkDns() {
+  var results = {};
+  await Promise.all(DNS_PROVIDERS.map(async function (p) {
+    var r = {};
+    try { r = (await p.run()) || {}; } catch (e) {}
+    if (r.ip && !r.cc) {
+      var g = await ipGeo(r.ip);
+      r.cc = g.cc;
+      r.org = r.org || g.org;
+    }
+    results[p.id] = r;
+  }));
+  lastDns = { results: results };
+  renderDns();
+  $('dnsCard').querySelectorAll('.item').forEach(function (el) { el.style.minHeight = ''; });
+}
+
 async function runCheck() {
   if (running) return;
   running = true;
@@ -887,6 +1022,8 @@ async function runCheck() {
   TARGETS.forEach(setPending);
   lastWebRTC = null;
   renderWebRTC();
+  lastDns = null;
+  renderDns();
   var byId = {};
   await Promise.all(TARGETS.map(async function (t) {
     var r = await probe(t);
@@ -895,6 +1032,7 @@ async function runCheck() {
   }));
   verdict(byId);
   checkWebRTC(byId);
+  checkDns();
   btn.disabled = false;
   btn.textContent = '\\u91cd\\u65b0\\u68c0\\u6d4b';
   running = false;
@@ -902,6 +1040,7 @@ async function runCheck() {
 
 renderRows();
 renderWebRTCRows();
+renderDnsRows();
 $('run').addEventListener('click', runCheck);
 $('maskToggle').addEventListener('change', function () {
   MASKED = this.checked;
@@ -910,6 +1049,7 @@ $('maskToggle').addEventListener('change', function () {
     if (lastResults[t.id] !== undefined) setResult(t, lastResults[t.id]);
   });
   renderWebRTC();
+  renderDns();
 });
 setTimeout(runCheck, 50);
 </script>
