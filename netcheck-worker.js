@@ -323,14 +323,15 @@ var TARGETS = [
   // 两条子线。出口 IP 用 myip.ipip.net（专攻中国 IP、城市级精度更高、
   // 返回中文，比 ipinfo.io 这种通用境外地理库更适合国内出口）。
   // 子行只留 3 个（跟另外两张卡对齐，不然这张卡明显比别的高一截）：
-  // 百度/哔哩哔哩代表国内网站，威廉的 AI Club 代表不在任何分流规则里、
-  // 会落 MATCH,DIRECT 的未分类网站——两类各留代表，不只测国内那一类。
+  // 三行都用国内网站（百度/哔哩哔哩/淘宝）。曾想留一行代表落 MATCH,DIRECT
+  // 的未分类境外网站，但实测国内直连境外网站普遍 1~8 秒甚至超时（亚马逊、
+  // 英伟达、英特尔等十几个都一样），放上去只会让会员误以为网络有问题。
   { id: 'cn',      name: '直连出口',          host: 'myip.ipip.net',   type: 'cn' },
   { id: 'baidu',   name: '百度',              host: 'baidu.com',       parent: 'cn',    type: 'ping', url: 'https://www.baidu.com/favicon.ico' },
   { id: 'bili',    name: '哔哩哔哩',          host: 'bilibili.com',    parent: 'cn',    type: 'ping', url: 'https://www.bilibili.com/favicon.ico' },
-  // 规范站点域名是裸域。www 曾遗留到停放页，测速它会把 SSL/源站错误误显示成
-  // “网站延迟”；这里必须直接测实际服务域名。
-  { id: 'wsays',   name: '威廉的 AI Club',    host: 'williamsays.com', parent: 'cn',    type: 'ping', url: 'https://williamsays.com/favicon.ico' }
+  // 曾用 williamsays.com，2026-10 它被收进境外规则集（中国移动家宽直连不了
+  // Cloudflare）后改走日常上网，不能再放在直连出口下。
+  { id: 'taobao',  name: '淘宝',              host: 'taobao.com',      parent: 'cn',    type: 'ping', url: 'https://www.taobao.com/favicon.ico' }
 ];
 var COLORS = ['#61afef', '#66bb6a', '#f0c040', '#e06c75', '#c678dd', '#56b6c2'];
 var running = false;
@@ -643,6 +644,10 @@ function verdict(byId) {
   // 🚨 境外规则集失效：中转线塌陷回本地出口 → 部分境外站点会打不开（AI 线仍正常，
   // 所以症状是"只有国内和 AI 站点能用"，安卓 FlClash 上真实出现过）
   var rulesetDown = relayK && cnK && relayK === cnK && aiK && aiK !== relayK;
+  // 住宅IP线不通、日常上网和直连都通：住宅IP要经机场节点（前置中转）转发到
+  // 它的高位端口，机场不放行高位端口时就是这个症状（Yanzhuo，2026-10-06）。
+  // 之前这种情况会落到最后的"检测到 N 个不同出口"，误报成绿色正常
+  var aiDown = !ai && !aiOk && (relayK || relayOk) && cnK && (!relayK || relayK !== cnK);
   var headline, cls, extra = '';
 
   if (order.length === 0) {
@@ -665,6 +670,10 @@ function verdict(byId) {
   } else if (lockMode) {
     headline = '✓ 「锁定境外出口」模式生效中：境外流量统一走静态住宅IP，国内直连';
     cls = 'ok';
+  } else if (aiDown) {
+    headline = '⚠ 静态住宅IP连接失败，但日常上网正常：多半是机场节点不支持转发高位端口，或住宅IP本身异常';
+    cls = 'warn';
+    extra = '<div class="upsell">自测方法：把客户端切到「全局」并选一个机场节点，用浏览器打开 http://portquiz.net:你的住宅IP端口，能打开说明机场支持，打不开就需要换一家支持高位端口转发的机场。测完记得切回「规则」。</div>';
   } else if (rulesetDown) {
     headline = '⚠ 境外规则集未生效：部分境外站点会打不开（只有国内和 AI 站点可用）。请检查网络后重新载入配置，或重新生成';
     cls = 'warn';
