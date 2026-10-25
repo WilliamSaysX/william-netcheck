@@ -860,7 +860,10 @@ function renderWebRTC() {
     var el = $('res-stun-' + s.id);
     var d = $('dot-stun-' + s.id);
     if (!r || !r.ip) {
-      el.innerHTML = '<span class="okonly">未返回地址（已拦截或无响应）</span>';
+      // 拿不到地址就说明网站没法借 WebRTC 获取 IP，本身就是安全的，给绿点，免得被灰点吓到
+      el.innerHTML = '<span class="note ok" style="width:auto;min-height:0">未返回地址：网站拿不到你的 IP，不会泄露</span>';
+      d.style.background = '#66bb6a';
+      d.classList.add('on');
       return;
     }
     anyIp = true;
@@ -995,12 +998,24 @@ function renderDns() {
   });
   if (!w) { head.innerHTML = ''; return; }
   var anyIp = false, anyLeak = false;
+  // 有别的检测服务已经给出结果时，个别服务没响应不影响结论。原来这一行是灰点 +
+  // 「未返回结果（服务无响应）」，不少人一看到不是绿色就慌了来问（2026-10-25），
+  // 改成绿点并说明不影响；全部都没响应才保持中性、提示重新检测
+  // Fastly 没查到解析器时 ip 字段是字符串 "not found"，不是地址，当成没响应
+  var hasIp = function (r) { return !!(r && typeof r.ip === 'string' && /^[0-9a-fA-F.:]+$/.test(r.ip) && /\\d/.test(r.ip)); };
+  var someAnswered = DNS_PROVIDERS.some(function (p) { return hasIp(w.results[p.id]); });
   DNS_PROVIDERS.forEach(function (p) {
     var r = w.results[p.id];
     var el = $('res-dnsp-' + p.id);
     var d = $('dot-dnsp-' + p.id);
-    if (!r || !r.ip) {
-      el.innerHTML = '<span class="okonly">未返回结果（服务无响应）</span>';
+    if (!hasIp(r)) {
+      if (someAnswered) {
+        el.innerHTML = '<span class="note ok" style="width:auto;min-height:0">这个检测服务暂时没响应，其他服务已确认正常，不影响结果</span>';
+        d.style.background = '#66bb6a';
+        d.classList.add('on');
+      } else {
+        el.innerHTML = '<span class="okonly">未返回结果（服务无响应）</span>';
+      }
       return;
     }
     anyIp = true;
