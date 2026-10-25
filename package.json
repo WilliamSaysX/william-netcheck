@@ -4,6 +4,6 @@
   "description": "威廉的 AI Club 网络分流检测",
   "private": true,
   "scripts": {
-    "deploy": "npx wrangler deploy -c wrangler-netcheck.toml"
+    "deploy": "set -a && . ./.env.deploy && set +a && npx wrangler deploy -c wrangler-netcheck.toml"
   }
 }
