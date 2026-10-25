@@ -481,7 +481,9 @@ async function probe(t) {
   }
 }
 
-function latCls(ms) { return ms < 200 ? 'fast' : ms < 500 ? 'mid' : 'slow'; }
+// 300ms 以内都算快（绿）：静态住宅 IP 在美国，延迟 200ms 上下是常态，对用 AI 完全够用；
+// 原来 200ms 就变黄，不少人看到黄色以为配置出了问题（2026-10-25）
+function latCls(ms) { return ms < 300 ? 'fast' : ms < 600 ? 'mid' : 'slow'; }
 function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
 function renderRows() {
